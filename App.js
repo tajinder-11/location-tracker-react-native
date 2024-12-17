@@ -1,117 +1,258 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- * @flow strict-local
- */
-
-import React from 'react';
-import type {Node} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
-  SafeAreaView,
-  ScrollView,
-  StatusBar,
-  StyleSheet,
-  Text,
-  useColorScheme,
   View,
+  Text,
+  Button,
+  PermissionsAndroid,
+  Platform,
+  Alert,
+  StyleSheet,
 } from 'react-native';
+import axios from 'axios';
+import Geolocation from 'react-native-geolocation-service';
+import BackgroundService from 'react-native-background-actions';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import {
-  Colors,
-  DebugInstructions,
-  Header,
-  LearnMoreLinks,
-  ReloadInstructions,
-} from 'react-native/Libraries/NewAppScreen';
+const App = () => {
+  const [location, setLocation] = useState({latitude: null, longitude: null});
+  const [tracking, setTracking] = useState(false);
 
-/* $FlowFixMe[missing-local-annot] The type annotation(s) required by Flow's
- * LTI update could not be added via codemod */
-const Section = ({children, title}): Node => {
-  const isDarkMode = useColorScheme() === 'dark';
+  useEffect(() => {
+    const initializeState = async () => {
+      Alert.alert(
+        'Location Permission',
+        'This app requires location permissions to track your location. Do you want to grant permissions?',
+        [
+          {
+            text: 'No',
+            onPress: () => console.log('User denied location permissions.'),
+            style: 'cancel',
+          },
+          {
+            text: 'Yes',
+            onPress: async () => {
+              const hasPermission = await requestLocationPermission();
+              if (!hasPermission) {
+                Alert.alert(
+                  'Permission Denied',
+                  'Please enable location permissions in your device settings to use this feature.',
+                );
+              }
+            },
+          },
+        ],
+      );
+
+      const savedTrackingState = await AsyncStorage.getItem('trackingState');
+      if (savedTrackingState === 'true') {
+        setTracking(true);
+        startBackgroundService();
+      }
+    };
+
+    initializeState();
+
+    return () => {
+      Geolocation.stopObserving();
+    };
+  }, []);
+
+  const requestLocationPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const fineLocationGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        );
+        const backgroundLocationGranted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
+        );
+
+        if (
+          fineLocationGranted === PermissionsAndroid.RESULTS.GRANTED &&
+          backgroundLocationGranted === PermissionsAndroid.RESULTS.GRANTED
+        ) {
+          console.log('Location permissions granted.');
+          return true;
+        } else {
+          console.warn('Location permissions denied.');
+          return false;
+        }
+      } catch (err) {
+        console.error('Permission request error:', err);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const getLocation = async () => {
+    return new Promise((resolve, reject) => {
+      Geolocation.getCurrentPosition(
+        position => {
+          const {latitude, longitude} = position.coords;
+          setLocation({latitude, longitude});
+          resolve({latitude, longitude});
+        },
+        error => {
+          Alert.alert('Error', error.message);
+          reject(error);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 30000,
+          maximumAge: 10000,
+        },
+      );
+    });
+  };
+
+  const uploadLocation = async (latitude, longitude) => {
+    try {
+      const response = await axios({
+        method: 'POST',
+        url: 'https://save-location-in-backgroun-poc.onrender.com/upload-location',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        data: {
+          lat: latitude,
+          long: longitude,
+        },
+      });
+      console.log('Location uploaded successfully:', response.data);
+    } catch (error) {
+      console.log('Error', error);
+      Alert.alert('Error', 'Failed to upload location');
+    }
+  };
+
+  const fetchLocation = async () => {
+    try {
+      const response = await axios({
+        method: 'GET',
+        url: 'https://save-location-in-backgroun-poc.onrender.com/get-all-locations',
+      });
+      console.log('Fetch all locations success: ', response.data);
+    } catch (error) {
+      console.log('Fetching location error: ', error);
+    }
+  };
+
+  const deleteAllLocations = async () => {
+    try {
+      const response = await axios({
+        method: 'DELETE',
+        url: 'https://save-location-in-backgroun-poc.onrender.com/delete-all-locations',
+      });
+      console.log('Delete all locations successfully: ', response.data);
+    } catch (error) {
+      console.log('Delete location error: ', error);
+    }
+  };
+
+  const backgroundTask = async taskDataArguments => {
+    const {delay} = taskDataArguments;
+    while (BackgroundService.isRunning()) {
+      try {
+        const {latitude, longitude} = await getLocation();
+        console.log(`Background Location: ${latitude}, ${longitude}`);
+        await uploadLocation(latitude, longitude);
+      } catch (error) {
+        console.error('Background Task Error:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  };
+
+  const options = {
+    taskName: 'Location Tracking',
+    taskTitle: 'Tracking Your Location',
+    taskDesc: 'Running in background',
+    taskIcon: {
+      name: 'ic_launcher',
+      type: 'mipmap',
+    },
+    color: 'white',
+    parameters: {
+      delay: 15000,
+    },
+  };
+
+  const startBackgroundService = async () => {
+    try {
+      await BackgroundService.start(backgroundTask, options);
+      setTracking(true);
+      await AsyncStorage.setItem('trackingState', 'true');
+    } catch (error) {
+      console.error('Failed to start background service:', error);
+    }
+  };
+
+  const stopBackgroundService = async () => {
+    try {
+      await BackgroundService.stop();
+      setTracking(false);
+      await AsyncStorage.setItem('trackingState', 'false');
+    } catch (error) {
+      console.error('Failed to stop background service:', error);
+    }
+  };
+
+  const toggleTracking = async () => {
+    const hasPermission = await requestLocationPermission();
+    if (!hasPermission) {
+      Alert.alert(
+        'Permission Denied',
+        'Location permission is required to use this feature.',
+      );
+      return;
+    }
+
+    if (!tracking) {
+      startBackgroundService();
+    } else {
+      stopBackgroundService();
+    }
+  };
+
   return (
-    <View style={styles.sectionContainer}>
-      <Text
-        style={[
-          styles.sectionTitle,
-          {
-            color: isDarkMode ? Colors.white : Colors.black,
-          },
-        ]}>
-        {title}
+    <View style={styles.parentContainer}>
+      <Text style={styles.textStyle}>
+        Latitude: {location.latitude || 'N/A'}
       </Text>
-      <Text
-        style={[
-          styles.sectionDescription,
-          {
-            color: isDarkMode ? Colors.light : Colors.dark,
-          },
-        ]}>
-        {children}
+      <Text style={styles.textStyle}>
+        Longitude: {location.longitude || 'N/A'}
       </Text>
+      <View>
+        <Button
+          title={tracking ? 'Stop Tracking' : 'Start Tracking'}
+          onPress={toggleTracking}
+        />
+      </View>
+
+      <View style={styles.buttonStyle}>
+        <Button title={'Fetch Location'} onPress={fetchLocation} />
+      </View>
+
+      <View style={styles.buttonStyle}>
+        <Button title={'Delete Location'} onPress={deleteAllLocations} />
+      </View>
     </View>
   );
 };
 
-const App: () => Node = () => {
-  const isDarkMode = useColorScheme() === 'dark';
-
-  const backgroundStyle = {
-    backgroundColor: isDarkMode ? Colors.darker : Colors.lighter,
-  };
-
-  return (
-    <SafeAreaView style={backgroundStyle}>
-      <StatusBar
-        barStyle={isDarkMode ? 'light-content' : 'dark-content'}
-        backgroundColor={backgroundStyle.backgroundColor}
-      />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        style={backgroundStyle}>
-        <Header />
-        <View
-          style={{
-            backgroundColor: isDarkMode ? Colors.black : Colors.white,
-          }}>
-          <Section title="Step One">
-            Edit <Text style={styles.highlight}>App.js</Text> to change this
-            screen and then come back to see your edits.
-          </Section>
-          <Section title="See Your Changes">
-            <ReloadInstructions />
-          </Section>
-          <Section title="Debug">
-            <DebugInstructions />
-          </Section>
-          <Section title="Learn More">
-            Read the docs to discover what to do next:
-          </Section>
-          <LearnMoreLinks />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
-};
+export default App;
 
 const styles = StyleSheet.create({
-  sectionContainer: {
-    marginTop: 32,
-    paddingHorizontal: 24,
+  parentContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  sectionTitle: {
-    fontSize: 24,
-    fontWeight: '600',
+  textStyle: {
+    marginBottom: 10,
   },
-  sectionDescription: {
-    marginTop: 8,
-    fontSize: 18,
-    fontWeight: '400',
-  },
-  highlight: {
-    fontWeight: '700',
+  buttonStyle: {
+    marginTop: 12,
   },
 });
-
-export default App;
