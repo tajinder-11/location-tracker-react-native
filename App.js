@@ -110,7 +110,7 @@ const App = () => {
     try {
       const response = await axios({
         method: 'POST',
-        url: 'https://save-location-in-backgroun-poc.onrender.com/upload-location',
+        url: `${baseUrl}/upload-location`,
         headers: {
           'Content-Type': 'application/json',
         },
@@ -130,7 +130,7 @@ const App = () => {
     try {
       const response = await axios({
         method: 'GET',
-        url: 'https://save-location-in-backgroun-poc.onrender.com/get-all-locations',
+        url: `${baseUrl}/get-all-locations`,
       });
       console.log('Fetch all locations success: ', response.data);
     } catch (error) {
@@ -142,7 +142,7 @@ const App = () => {
     try {
       const response = await axios({
         method: 'DELETE',
-        url: 'https://save-location-in-backgroun-poc.onrender.com/delete-all-locations',
+        url: `${baseUrl}/delete-all-locations`,
       });
       console.log('Delete all locations successfully: ', response.data);
     } catch (error) {
